@@ -25,7 +25,7 @@ The extension provides:
 
 When the agent (or you) supply a `summary`, that text becomes the compacted context verbatim — no second summarizer pass. The agent already holds the whole conversation, so it writes a better checkpoint than a model re-reading everything after the fact, and it's one fewer LLM call. Omit the summary and pi falls back to its default summarizer. Either way, pi appends the read/modified file list.
 
-**It ends the current turn.** Under the hood `ctx.compact()` aborts the in-flight response and reloads the session on the compacted context (it does not auto-resume), so it's meant to be a final, turn-closing action rather than something done mid-task. Timing and content are left entirely to the model — nothing forces it and nothing blocks it (pi itself rejects a session too small to compact).
+**It ends the current turn.** Under the hood `ctx.compact()` aborts the in-flight response and reloads the session on the compacted context (it does not auto-resume). Timing and content are left entirely to the model — nothing forces it, nothing blocks it, and no restrictions are placed on when it's used (pi itself rejects only a session too small to compact).
 
 ```text
 /self-compact Goal: ship the retry fix. Done: root-caused the ECONNRESET to the pooled socket. Next: add a backoff test. Keep src/pool.ts:changeTimeout. Dead end: raising the OS keepalive did nothing.

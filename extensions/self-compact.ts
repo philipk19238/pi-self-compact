@@ -67,9 +67,8 @@ export default function (pi: ExtensionAPI) {
 			"Compress your own context. You write a summary of the work so far; it replaces the older messages while your most recent turns are kept, and you continue on the smaller context. Ends the current turn — you resume on your summary.",
 		promptSnippet: "Compress your own context by writing a summary that replaces older history.",
 		promptGuidelines: [
-			"This is yours to drive: you decide when your context needs compressing and you write exactly what survives. Write the summary as a handoff to your future self — the goal, what's done, what's next, and any hard-won detail you'd regret losing (exact paths, names, errors, decisions, dead ends). Whatever you leave out is gone.",
-			"Light cues for a good moment: old exploration or large tool outputs have become dead weight, or a chunk of work just finished or was abandoned. There's no threshold to wait for — a natural pause is enough.",
-			"Calling it ends the current turn and reloads you on your summary, so make it your final action at a pause, not something mid-task. Omit the summary only if you'd rather have one generated for you.",
+			"This is yours to drive — you decide when to compress and you write exactly what survives. Treat the summary as a handoff to your future self: goal, what's done, what's next, and any hard-won detail worth keeping (exact paths, names, errors, decisions, dead ends). What you leave out won't carry over.",
+			"It can help when old exploration or large tool outputs have turned into dead weight, or when a piece of work wraps up. It ends the current turn and reloads you on your summary. Omit the summary and one is generated for you.",
 		],
 		parameters: Type.Object({
 			summary: Type.Optional(
