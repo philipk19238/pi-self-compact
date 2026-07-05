@@ -1,38 +1,32 @@
 # pi-self-compact
 
-A small [pi](https://pi.dev) package that registers a `self_compact` tool. The tool lets the agent trigger pi session compaction when context gets stale, noisy, or too large.
+A small [pi](https://pi.dev) package that registers a `self_compact` tool. It lets the agent compress its own context: the agent **writes its own summary**, which replaces the older messages while recent turns are kept.
 
 ## Install
 
 ```bash
-pi install git:github.com/philipk19238/pi-self-compact@v0.2.0
+pi install npm:pi-self-compact
 ```
 
 Try it for one run without installing:
 
 ```bash
-pi -e git:github.com/philipk19238/pi-self-compact@v0.2.0
+pi -e npm:pi-self-compact
 ```
 
 ## Usage
 
 The extension provides:
 
-- Tool: `self_compact` — the agent calls this itself when older history has become dead weight.
-- Command: `/self-compact [optional focus instructions]` — you trigger it manually.
+- Tool: `self_compact` — the agent calls this itself, passing the summary it wants to keep.
+- Command: `/self-compact [summary]` — trigger it manually. Pass a summary to use, or leave it empty to have one generated.
 
-### When it fires
+### How it works
 
-pi already auto-compacts when the context window fills up. `self_compact` is for compacting **earlier and at a cleaner point** — when recent exploration has become dead weight — so the summary lands on a natural boundary instead of auto-compaction firing mid-task. It's lossy and costs a model call, so it's meant to be deliberate, not reflexive.
+When the agent (or you) supply a `summary`, that text becomes the compacted context verbatim — no second summarizer pass. The agent already holds the whole conversation, so it writes a better checkpoint than a model re-reading everything after the fact, and it's one fewer LLM call. Omit the summary and pi falls back to its default summarizer. Either way, pi appends the read/modified file list.
 
-**It ends the current turn.** Under the hood `ctx.compact()` aborts the in-flight response, summarizes, and reloads the session on the compacted context (it does not auto-resume). So the agent should treat it as a final, turn-closing action — not something to do and then keep working within the same turn. Timing is left entirely to the model: nothing forces it and nothing blocks it (pi itself rejects a session that's too small to compact).
-
-### Focus instructions
-
-The `customInstructions` (or the text after `/self-compact`) are **appended** to pi's default summary prompt, which already preserves goals, constraints, progress, decisions, next steps, file paths, and error messages. So don't restate those — pass only what's specific to this session that a generic summarizer would drop:
+**It ends the current turn.** Under the hood `ctx.compact()` aborts the in-flight response and reloads the session on the compacted context (it does not auto-resume), so it's meant to be a final, turn-closing action rather than something done mid-task. Timing and content are left entirely to the model — nothing forces it and nothing blocks it (pi itself rejects a session too small to compact).
 
 ```text
-/self-compact Keep the derived config schema verbatim. Note that the WebSocket approach failed with ECONNRESET. Discard the initial repo tour.
+/self-compact Goal: ship the retry fix. Done: root-caused the ECONNRESET to the pooled socket. Next: add a backoff test. Keep src/pool.ts:changeTimeout. Dead end: raising the OS keepalive did nothing.
 ```
-
-Run with no argument to just use the default summary as-is.

@@ -1,79 +1,105 @@
-import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import type { CompactionResult, ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 
-/** Human-readable context usage, e.g. "42%", or undefined if pi can't estimate it yet. */
-function contextPercent(ctx: ExtensionContext): string | undefined {
-	const usage = ctx.getContextUsage();
-	if (!usage || usage.percent == null) return undefined;
-	return `${Math.round(usage.percent)}%`;
+// The summary the agent wrote for its own compaction, handed from the tool call
+// to the before-compact hook. Undefined means "let the default summarizer run".
+let pendingSummary: string | undefined;
+
+/** Split fileOps into sorted read-only / modified lists (mirrors the default compaction). */
+function fileLists(fileOps: { read: Set<string>; written: Set<string>; edited: Set<string> }) {
+	const modified = new Set<string>([...fileOps.edited, ...fileOps.written]);
+	return {
+		readFiles: [...fileOps.read].filter((f) => !modified.has(f)).sort(),
+		modifiedFiles: [...modified].sort(),
+	};
 }
 
-function triggerSelfCompact(ctx: ExtensionContext, customInstructions?: string): string | undefined {
-	const before = contextPercent(ctx);
+function fileFooter(readFiles: string[], modifiedFiles: string[]): string {
+	const sections: string[] = [];
+	if (readFiles.length) sections.push(`<read-files>\n${readFiles.join("\n")}\n</read-files>`);
+	if (modifiedFiles.length) sections.push(`<modified-files>\n${modifiedFiles.join("\n")}\n</modified-files>`);
+	return sections.length ? `\n\n${sections.join("\n\n")}` : "";
+}
 
+function startCompaction(ctx: ExtensionContext, summary?: string) {
+	pendingSummary = summary;
 	if (ctx.hasUI) {
-		ctx.ui.notify(before ? `Self-compaction started (context at ${before})` : "Self-compaction started", "info");
+		ctx.ui.notify("Compacting context…", "info");
 	}
-
 	ctx.compact({
-		customInstructions,
 		onComplete: () => {
 			if (ctx.hasUI) {
-				ctx.ui.notify("Self-compaction completed", "info");
+				ctx.ui.notify("Context compacted", "info");
 			}
 		},
 		onError: (error) => {
+			// Compaction can throw before the hook fires (e.g. session too small);
+			// drop the staged summary so it can't leak into a later compaction.
+			pendingSummary = undefined;
 			if (ctx.hasUI) {
-				ctx.ui.notify(`Self-compaction failed: ${error.message}`, "error");
+				ctx.ui.notify(`Compaction failed: ${error.message}`, "error");
 			}
 		},
 	});
-
-	return before;
 }
 
 export default function (pi: ExtensionAPI) {
+	// When the agent supplied its own summary, use it verbatim as the compacted
+	// context instead of running the default summarizer over the old messages.
+	pi.on("session_before_compact", (event) => {
+		if (event.reason !== "manual" || pendingSummary === undefined) return;
+		const summary = pendingSummary;
+		pendingSummary = undefined;
+		const { readFiles, modifiedFiles } = fileLists(event.preparation.fileOps);
+		const compaction: CompactionResult = {
+			summary: summary + fileFooter(readFiles, modifiedFiles),
+			firstKeptEntryId: event.preparation.firstKeptEntryId,
+			tokensBefore: event.preparation.tokensBefore,
+			details: { readFiles, modifiedFiles },
+		};
+		return { compaction };
+	});
+
 	pi.registerTool({
 		name: "self_compact",
 		label: "Self Compact",
 		description:
-			"Compact the current session: older conversation history is replaced by a structured summary while recent turns are kept. This ENDS the current turn — it aborts the in-flight response, then reloads the session on the compacted context. Compaction is lossy and costs a model call, so trigger it deliberately when work has reached a natural pause, not mid-task.",
-		promptSnippet: "Compact your own context at a natural pause when older history has become dead weight (ends the current turn).",
+			"Compress your own context. You write a summary of the work so far; it replaces the older messages while your most recent turns are kept, and you continue on the smaller context. Ends the current turn — you resume on your summary.",
+		promptSnippet: "Compress your own context by writing a summary that replaces older history.",
 		promptGuidelines: [
-			"pi already auto-compacts when the context window fills up. Use self_compact to compact EARLIER and at a cleaner point — when the recent exploration has become dead weight — so the summary lands on a natural boundary instead of auto-compaction firing mid-task.",
-			"Calling self_compact ENDS the current turn: it aborts the in-flight response, summarizes older history, and reloads the session. Call it as your final action when work has reached a natural pause — never in the middle of a task you intend to keep working on in the same turn.",
-			"Good moments: a chunk of work is finished and the debugging/exploration that produced it no longer matters; you've accumulated large tool outputs (long file reads, logs, search dumps) whose conclusions you've already extracted; you abandoned an approach and only 'don't retry X' is worth keeping. Trust your own judgment on timing — there is no threshold, and nothing forces or blocks the call.",
-			"Set customInstructions to only what is SPECIFIC to this session that a generic summarizer would drop or under-weight — e.g. 'keep the exact derived config schema verbatim', 'record that approach X via Y failed with error Z', 'discard the initial repo tour'. The default summary already preserves goals, constraints, progress, decisions, next steps, file paths, and error messages, so do NOT restate those.",
+			"This is yours to drive: you decide when your context needs compressing and you write exactly what survives. Write the summary as a handoff to your future self — the goal, what's done, what's next, and any hard-won detail you'd regret losing (exact paths, names, errors, decisions, dead ends). Whatever you leave out is gone.",
+			"Light cues for a good moment: old exploration or large tool outputs have become dead weight, or a chunk of work just finished or was abandoned. There's no threshold to wait for — a natural pause is enough.",
+			"Calling it ends the current turn and reloads you on your summary, so make it your final action at a pause, not something mid-task. Omit the summary only if you'd rather have one generated for you.",
 		],
 		parameters: Type.Object({
-			customInstructions: Type.Optional(
+			summary: Type.Optional(
 				Type.String({
 					description:
-						"Session-specific focus for the summary: what to preserve verbatim or what to discard, beyond the default (goals, constraints, progress, decisions, next steps, file paths, errors). Leave empty to use the default summary as-is.",
+						"The summary that will replace the older conversation — written by you as a checkpoint to continue from. Include everything you'll need and leave out the noise. Omit to have one generated instead.",
 				}),
 			),
 		}),
 		async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
-			const instructions = params.customInstructions?.trim() || undefined;
-			const before = triggerSelfCompact(ctx, instructions);
+			const summary = params.summary?.trim() || undefined;
+			startCompaction(ctx, summary);
 			return {
 				content: [
 					{
 						type: "text",
-						text: before
-							? `Self-compaction started (context was at ${before}). This ends the current turn; the session reloads on the compacted context with recent turns preserved.`
-							: "Self-compaction started. This ends the current turn; the session reloads on the compacted context with recent turns preserved.",
+						text: summary
+							? "Compacting: your summary replaces the older history. This ends the current turn; you resume on it with recent turns kept."
+							: "Compacting with a generated summary. This ends the current turn; you resume on it with recent turns kept.",
 					},
 				],
-				details: { customInstructions: instructions ?? null, contextBefore: before ?? null },
+				details: { authored: summary !== undefined },
 			};
 		},
 	});
 
 	pi.registerCommand("self-compact", {
-		description: "Trigger session compaction with optional focus instructions",
+		description: "Compact the session — pass a summary to use, or leave empty to generate one",
 		handler: async (args, ctx) => {
-			triggerSelfCompact(ctx, args.trim() || undefined);
+			startCompaction(ctx, args.trim() || undefined);
 		},
 	});
 }
