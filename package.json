@@ -1,0 +1,15 @@
+{
+  "name": "pi-self-compact",
+  "version": "0.1.0",
+  "description": "A pi extension that lets the agent trigger session compaction on itself.",
+  "keywords": ["pi-package", "pi", "extension", "compaction"],
+  "license": "MIT",
+  "type": "module",
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": "*",
+    "typebox": "*"
+  },
+  "pi": {
+    "extensions": ["./extensions/self-compact.ts"]
+  }
+}
